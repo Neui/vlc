@@ -237,6 +237,7 @@ function probe()
             or string.match( vlc.path, "/get_video_info%?" ) -- info API
             or string.match( vlc.path, "/v/" ) -- video in swf player
             or string.match( vlc.path, "/embed/" ) -- embedded player iframe
+            or string.match( vlc.path, "/playlist/?%?" ) -- playlist
              ) )
 end
 
@@ -397,6 +398,89 @@ function parse()
         end
 
         return { { path = path, title = title, artist = artist, arturl = arturl } }
+
+    elseif string.match( vlc.path, "/playlist/?%?" ) then -- playlist
+        -- FIXME: Find a better way, otherwise only 100 videos are being found
+        local playlist = {}
+        local video = nil
+        
+        -- Find first video entry
+        while true do
+            line = vlc.readline()
+            if (not line) or string.find( line, "data%-set%-video%-id" ) then
+                break
+            end
+        end
+        if not line then return {} end
+        
+        while true do
+            if (not line) or string.find( line, "data%-set%-video%-id" ) then
+                -- commit
+                if video == nil then
+                    -- First time looping, do nothing
+                elseif video.path then
+                    playlist[#playlist + 1] = video
+                else
+                    vlc.msg.dbg( "Trying to commit an invalid video" )
+                end
+                video = { meta = {} }
+            end
+            if not line then break end
+
+            if not video.path then
+                video_id = string.match( line, "data%-video%-id=\"(.-)\"" )
+                if video_id then
+                    video.path = vlc.access.."://www.youtube.com/watch?v="..video_id
+                    video.meta.yt_video_id = video_id
+                end
+            end
+
+            if not video.title then
+                title = string.match( line, "data%-title=\"(.-)\"" )
+                if title then
+                    title = vlc.strings.resolve_xml_special_chars( title )
+                    video.title = title
+                    video.name = title
+                end
+            end
+
+            if not video.arturl and video.path then
+                -- While there is already a data-thump tag,
+                -- I think this is a bit easier
+                local backup = vlc.path
+                vlc.path = video.path
+                video.arturl = get_arturl()
+                vlc.path = backup
+            end
+
+            if not video.duration
+                and string.find( line, "<div class=\"timestamp\">" )
+            then
+                local h = 0
+                local m = nil
+                local s = nil
+                if string.find( line, "%d+:%d+:%d+" ) then
+                    h, m, s = string.match( line, "(%d+):(%d+):(%d+)" )
+                else
+                    m, s = string.match( line, "(%d+):(%d+)" )
+                end
+                if h and m and s then
+                    video.duration = s + m*60 + h*60*60
+                end
+            end
+
+            if not video.artist then
+                if string.find( line, "pl%-video%-owner" ) then
+                    line = vlc.readline()
+                    owner = string.match( line, "<a .->(.-)</a>" )
+                    video.artist = owner
+                end
+            end
+
+            line = vlc.readline()
+        end
+
+        return playlist
 
     else -- Other supported URL formats
         local video_id = string.match( vlc.path, "/[^/]+/([^?]*)" )
