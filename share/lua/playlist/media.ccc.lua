@@ -33,7 +33,66 @@ function probe()
     return ( vlc.access == "http" or vlc.access == "https" )
             and
            ( string.match( vlc.path, "media%.ccc%.de/v/.+" )
-            or string.match( vlc.path, "media%.ccc%.de/v/.+/oembed$" ) )
+            or string.match( vlc.path, "media%.ccc%.de/v/.+/oembed$" )
+            or string.match( vlc.path, "media%.ccc%.de/[bc]/.+" )
+            )
+end
+
+
+function parse_playlist()
+    local playlist = {}
+    local video = {}
+
+    while true do
+        line = vlc.readline()
+        if (not line) or string.find( line, "<div class='event%-preview'>" ) then
+            break
+        end
+    end
+
+    while true do
+        line = vlc.readline()
+        if (not line) or string.find( line, "<div class='event%-preview'>" ) then
+            -- commit
+            if video.path then
+                playlist[#playlist + 1] = video
+            end
+            video = {}
+        end
+        if not line then break end
+
+        if not video.path then
+            local uri = string.match( line, "<a href='/v/(.-)'>")
+            if uri then
+                video.path = vlc.access.."://media.ccc.de/v/"..uri
+            end
+        end
+
+        if not video.title then
+            local title = string.match( line, "<img alt='(.-)' class='video%-thumbnail'")
+            if title then
+                title = vlc.strings.resolve_xml_special_chars( title )
+                video.title = title
+                video.name = title
+            end
+        end
+
+        if not video.arturl then
+            local poster = string.match( line, "class='video%-thumbnail' src='(.-)'>")
+            if poster then
+                video.arturl = poster
+            end
+        end
+
+        if not video.duration then
+            local durationstr = string.match( line, "(%d+)%s+min" )
+            if durationstr then
+                video.duration = tonumber(durationstr) * 60
+            end
+        end
+    end
+
+    return playlist
 end
 
 function parse()
@@ -43,6 +102,10 @@ function parse()
                 path=vlc.access.."://"..string.sub( vlc.path, 1, -#"/oembed" -  1)
             }
         }
+    end
+
+    if string.match( vlc.path, "media%.ccc%.de/[bc]/.+" ) then
+        return parse_playlist()
     end
 
     local page = ""
